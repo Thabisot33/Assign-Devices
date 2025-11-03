@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Assign Device to Customer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      align-items: start;
+      padding: 40px 20px;
+    }
+
+    .card {
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+      width: 100%;
+      max-width: 500px;
+      text-align: center;
+    }
+
+    .logo {
+      width: 180px;
+      margin-bottom: 15px;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+    }
+
+    h2 {
+      font-size: 20px;
+      color: #333;
+      margin-bottom: 25px;
+    }
+
+    input[type="text"] {
+      padding: 12px;
+      width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 16px;
+      margin-bottom: 20px;
+    }
+
+    .link {
+      margin: 8px 0;
+    }
+
+    .link a {
+      display: block;
+      background: deeppink;
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: bold;
+      transition: background 0.2s ease-in-out;
+      cursor: pointer;
+    }
+
+    .link a:hover {
+      background: #c2185b;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-top: 15px;
+    }
+
+    .button-group button {
+      flex: 1;
+      padding: 12px;
+      font-size: 16px;
+      background-color: deeppink;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .button-group button:hover {
+      background-color: #c2185b;
+    }
+
+    #deviceSection {
+      display: none;
+      margin-top: 20px;
+    }
+
+    video {
+      width: 100%;
+      border-radius: 10px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    #assignBtn {
+      display: none;
+      background: limegreen;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="Umoja Logo Web_320x86_png.png" alt="Logo" class="logo" />
+
+    <h2>Search Customer by ID</h2>
+    <input type="text" id="searchInput" placeholder="Enter ID or Passport number..." onkeyup="filterLinks()" />
+    <div id="linkContainer"></div>
+
+    <div id="deviceSection">
+      <h3 id="customerName"></h3>
+      <div class="button-group">
+        <button onclick="startScanner()">Scan QR</button>
+      </div>
+
+      <video id="qrVideo"></video>
+
+      <br><input type="text" id="deviceCode" placeholder="Enter code manually" oninput="checkDeviceInput()" />
+
+      <button id="assignBtn" onclick="assignDevice()">Assign</button>
+    </div>
+  </div>
+
+  <!-- QR Code Scanning Library -->
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+
+  <script>
+    const sheetID = '1n9IOhlus1l29XmiZZ5htu1neITYIcvMIUyEPTnpcS54';
+    const sheetName = 'Customer_Data';
+    const apiKey = 'AIzaSyB7KkrxEuYwukMKD_IrI26Mj6NEijnlcck';
+    const apiURL = `https://sheets.googleapis.com/v4/spreadsheets/${sheetID}/values/${sheetName}?alt=json&key=${apiKey}`;
+
+    const assignURL = 'YOUR_API_URL_HERE'; // 🔁 REPLACE THIS WITH YOUR SUPABASE FUNCTION OR API URL
+
+    let allCustomers = [];
+    let selectedCustomer = null;
+    let codeReader = null;
+
+    async function fetchCustomers() {
+      try {
+        const response = await fetch(apiURL);
+        const data = await response.json();
+        const rows = data.values;
+
+        if (!rows || rows.length <= 1) return;
+
+        allCustomers = rows.slice(1).map(row => ({
+          id: row[0],          // Column A: Customer ID
+          name: row[1] || '',  // Column B: Customer Name
+          idNumber: row[4] || '' // Column E: ID Number
+        }));
+      } catch (err) {
+        console.error('Error fetching data:', err);
+      }
+    }
+
+    function displayCustomers(customers) {
+      const container = document.getElementById("linkContainer");
+      container.innerHTML = "";
+
+      if (customers.length === 0) {
+        container.innerHTML = "<p>No matching customer found.</p>";
+        return;
+      }
+
+      customers.forEach(({ id, name }) => {
+        const div = document.createElement("div");
+        div.className = "link";
+        div.innerHTML = `<a onclick="selectCustomer('${id}', '${name}')">${name}</a>`;
+        container.appendChild(div);
+      });
+    }
+
+    function filterLinks() {
+      const searchTerm = document.getElementById("searchInput").value.trim();
+      if (searchTerm === "") {
+        document.getElementById("linkContainer").innerHTML = "";
+        return;
+      }
+
+      const filtered = allCustomers.filter(cust =>
+        cust.idNumber.toLowerCase() === searchTerm.toLowerCase()
+      );
+      displayCustomers(filtered);
+    }
+
+    function selectCustomer(id, name) {
+      selectedCustomer = { id, name };
+      document.getElementById("customerName").textContent = `Customer: ${name}`;
+      document.getElementById("deviceSection").style.display = "block";
+      document.getElementById("linkContainer").innerHTML = "";
+    }
+
+    async function startScanner() {
+      const video = document.getElementById('qrVideo');
+      video.style.display = 'block';
+
+      if (!codeReader) codeReader = new ZXing.BrowserQRCodeReader();
+
+      try {
+        const devices = await ZXing.BrowserQRCodeReader.listVideoInputDevices();
+        const selectedDeviceId = devices[0].deviceId;
+
+        codeReader.decodeOnceFromVideoDevice(selectedDeviceId, 'qrVideo')
+          .then(result => {
+            document.getElementById('deviceCode').value = result.text;
+            video.style.display = 'none';
+            checkDeviceInput();
+          })
+          .catch(err => {
+            console.error('QR scan failed:', err);
+            alert('Could not scan QR code. Try again.');
+          });
+      } catch (err) {
+        console.error('Error accessing camera:', err);
+        alert('Camera not accessible.');
+      }
+    }
+
+    function checkDeviceInput() {
+      const code = document.getElementById('deviceCode').value.trim();
+      const assignBtn = document.getElementById('assignBtn');
+      assignBtn.style.display = code ? 'block' : 'none';
+    }
+
+    async function assignDevice() {
+        const code = document.getElementById('deviceCode').value.trim();
+        if (!selectedCustomer || !code) {
+            alert("Missing customer or device code.");
+            return;
+        }
+
+        const itemId = code; // assuming the code is the inventory ID or barcode
+        const payload = {
+            status: "assigned",
+            mark: "used",
+            customer_id: parseInt(selectedCustomer.id)
+        };
+
+        try {
+            const res = await fetch(`https://portal.umoja.network/api/2.0/inventory/items/${itemId}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Basic NGQwNzQwZGE2NjFjYjRlYTQzMjM2NmM5MGZhZGUxOWU6MmE0ZDkzOGVkNTYyMjg5MmExNDdmMjZjMmVlNTI2MmI="
+            },
+            body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(errorText);
+            }
+
+            alert(`✅ Device ${code} assigned to ${selectedCustomer.name} (Customer ID: ${selectedCustomer.id})`);
+        } catch (err) {
+            console.error(err);
+            alert("❌ Failed to assign device: " + err.message);
+        }
+        }
+
+
+    fetchCustomers();
+  </script>
+</body>
+</html>
